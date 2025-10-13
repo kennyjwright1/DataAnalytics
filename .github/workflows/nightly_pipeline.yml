@@ -1,0 +1,72 @@
+name: Nightly Data Pipeline
+
+on:
+  schedule:
+    - cron: "15 3 * * *"   # runs daily at 03:15 UTC
+  workflow_dispatch:       # lets you run it manually from Actions tab
+  push:
+    paths:
+      - "src/**"
+      - "pyproject.toml"
+      - ".github/workflows/nightly_pipeline.yml"
+
+jobs:
+  etl:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # needed to commit docs/ updates
+
+    env:
+      # Required for Azure sentiment step
+      AZURE_TEXT_ENDPOINT: ${{ secrets.AZURE_TEXT_ENDPOINT }}
+      AZURE_TEXT_KEY: ${{ secrets.AZURE_TEXT_KEY }}
+
+      # Optional (if using these sources)
+      REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
+      REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
+      REDDIT_USER_AGENT: ${{ secrets.REDDIT_USER_AGENT }}
+      YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install project
+        run: pip install -e .
+
+      # === Ingestion (choose what you use) ===
+      - name: Ingest GDELT (news)
+        run: python src/ingest/gdelt_ingest.py
+
+      - name: Ingest Reddit (public discussion)
+        run: python src/ingest/reddit_ingest.py
+
+      - name: Ingest YouTube (comments)
+        run: python src/ingest/youtube_ingest.py
+
+      # === Transform / NLP / Aggregations ===
+      - name: Clean & normalize
+        run: python src/transform/clean_normalize.py
+
+      - name: Azure sentiment
+        run: python src/nlp/azure_sentiment.py
+
+      - name: Aggregates for BI
+        run: python src/analytics/aggregates.py
+
+      - name: Build Pages site
+        run: python src/viz/build_site.py
+
+      # Commit updated docs/ (chart) and optional exports
+      - name: Commit docs and exports
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/ data/processed/exports/*.csv || true
+          git commit -m "nightly: refresh charts and exports" || echo "No changes"
+          git push
