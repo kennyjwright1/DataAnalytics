@@ -1,0 +1,35 @@
+"""
+Build a simple HTML chart (GitHub Pages) using Plotly.
+
+Input:
+  data/processed/exports/program_month_sentiment.csv
+
+Output:
+  docs/index.html
+"""
+import pathlib
+import pandas as pd
+import plotly.express as px
+
+DATA = pathlib.Path("data/processed/exports/program_month_sentiment.csv")
+DOCS = pathlib.Path("docs")
+
+def main():
+    if not DATA.exists():
+        raise SystemExit("Missing exports CSV. Run aggregates.py first.")
+    df = pd.read_csv(DATA, parse_dates=["month"])
+    if df.empty:
+        raise SystemExit("No rows in exports CSV; nothing to plot.")
+
+    fig = px.line(
+        df, x="month", y="pos", color="Program",
+        title="Average Positive Sentiment by Program (Monthly)",
+        labels={"month": "Month", "pos": "Positive score (0–1)"}
+    )
+    DOCS.mkdir(parents=True, exist_ok=True)
+    out = DOCS / "index.html"
+    fig.write_html(out, include_plotlyjs="cdn", full_html=True)
+    print(f"Wrote {out}")
+
+if __name__ == "__main__":
+    main()
