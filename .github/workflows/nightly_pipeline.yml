@@ -2,8 +2,8 @@ name: Nightly Data Pipeline
 
 on:
   schedule:
-    - cron: "15 3 * * *"   # runs daily at 03:15 UTC
-  workflow_dispatch:       # lets you run it manually from Actions tab
+    - cron: "15 3 * * *"   # daily at 03:15 UTC
+  workflow_dispatch:       # manual run button
   push:
     paths:
       - "src/**"
@@ -14,14 +14,13 @@ jobs:
   etl:
     runs-on: ubuntu-latest
     permissions:
-      contents: write   # needed to commit docs/ updates
+      contents: write
 
     env:
-      # Required for Azure sentiment step
+      # Required for Azure sentiment step (optional if you skip that step)
       AZURE_TEXT_ENDPOINT: ${{ secrets.AZURE_TEXT_ENDPOINT }}
       AZURE_TEXT_KEY: ${{ secrets.AZURE_TEXT_KEY }}
-
-      # Optional (if using these sources)
+      # Optional sources
       REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
       REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
       REDDIT_USER_AGENT: ${{ secrets.REDDIT_USER_AGENT }}
@@ -36,33 +35,65 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install project
-        run: pip install -e .
+      - name: Install project (and ensure praw is present)
+        run: |
+          pip install -e .
+          # safety net if pyproject change hasn't been pushed yet:
+          python - <<'PY'
+          import importlib, sys
+          sys.exit(0) if importlib.util.find_spec('praw') else sys.exit(1)
+          PY
+          if [ $? -ne 0 ]; then pip install praw; fi
 
-      # === Ingestion (choose what you use) ===
+      - name: Show which secrets are set (no values)
+        run: |
+          python - <<'PY'
+          import os
+          for k in ["AZURE_TEXT_ENDPOINT","AZURE_TEXT_KEY",
+                    "REDDIT_CLIENT_ID","REDDIT_CLIENT_SECRET","REDDIT_USER_AGENT",
+                    "YOUTUBE_API_KEY"]:
+              print(f"{k}: {'SET' if os.environ.get(k) else 'NOT SET'}")
+          PY
+
+      # ============== INGEST ==============
+
       - name: Ingest GDELT (news)
         run: python src/ingest/gdelt_ingest.py
+        continue-on-error: true   # don't fail the whole job on transient network errors
 
       - name: Ingest Reddit (public discussion)
+        if: ${{ env.REDDIT_CLIENT_ID != '' && env.REDDIT_CLIENT_SECRET != '' && env.REDDIT_USER_AGENT != '' }}
         run: python src/ingest/reddit_ingest.py
 
       - name: Ingest YouTube (comments)
+        if: ${{ env.YOUTUBE_API_KEY != '' }}
         run: python src/ingest/youtube_ingest.py
 
-      # === Transform / NLP / Aggregations ===
+      # ============== TRANSFORM / NLP / AGGREGATES / SITE ==============
+
       - name: Clean & normalize
         run: python src/transform/clean_normalize.py
 
       - name: Azure sentiment
+        if: ${{ env.AZURE_TEXT_ENDPOINT != '' && env.AZURE_TEXT_KEY != '' }}
         run: python src/nlp/azure_sentiment.py
 
       - name: Aggregates for BI
-        run: python src/analytics/aggregates.py
+        run: |
+          if [ -f "data/processed/tdlr_scored.parquet" ]; then
+            python src/analytics/aggregates.py
+          else
+            echo "Skipping aggregates: scored parquet not found (Azure step likely skipped)."
+          fi
 
       - name: Build Pages site
-        run: python src/viz/build_site.py
+        run: |
+          if [ -f "data/processed/exports/program_month_sentiment.csv" ]; then
+            python src/viz/build_site.py
+          else
+            echo "Skipping site build: no exports CSV."
+          fi
 
-      # Commit updated docs/ (chart) and optional exports
       - name: Commit docs and exports
         run: |
           git config user.name "github-actions[bot]"
