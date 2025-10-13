@@ -1,0 +1,6 @@
+# Workflow snippet
+# Add these steps to your nightly workflow after Python setup:
+#   - run: python src/ingest/reddit_ingest.py
+#   - run: python src/ingest/gdelt_ingest.py
+#   - run: python src/ingest/youtube_ingest.py
+# Ensure you set REDDIT_CLIENT_ID/SECRET/USER_AGENT and YOUTUBE_API_KEY as repo secrets.
