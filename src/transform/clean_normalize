@@ -1,0 +1,74 @@
+"""
+Clean & normalize raw ingested rows into a single parquet for scoring.
+
+Inputs:
+  data/raw/*.parquet  ← written by your ingest scripts (GDELT/Reddit/YouTube) or fetch_public_data.py
+
+Output:
+  data/interim/tdlr_clean.parquet
+"""
+import pathlib
+import pandas as pd
+
+RAW_DIR = pathlib.Path("data/raw")
+OUT = pathlib.Path("data/interim/tdlr_clean.parquet")
+
+MIN_TEXT_LEN = 15  # drop very short texts/noise
+
+def normalize_program(val):
+    if not isinstance(val, str):
+        return "Unknown"
+    v = val.strip()
+    if not v:
+        return "Unknown"
+    m = {
+        "cosmetology": "Cosmetology",
+        "barbering": "Barbering",
+        "electricians": "Electricians",
+        "tow trucks": "Tow Trucks",
+        "news": "News",
+        "publicdiscussion": "PublicDiscussion",
+    }
+    key = v.lower()
+    return m.get(key, v.title())
+
+def main():
+    files = sorted(RAW_DIR.glob("*.parquet"))
+    if not files:
+        raise SystemExit("No raw parquet files found in data/raw/. Run an ingest step first.")
+    frames = [pd.read_parquet(p) for p in files]
+    df = pd.concat(frames, ignore_index=True)
+
+    df = df.rename(columns={c: c.strip().title() for c in df.columns})
+
+    if "Description" not in df.columns:
+        if "Body" in df.columns and "Title" in df.columns:
+            df["Description"] = (df["Title"].fillna("").astype(str) + " " +
+                                 df["Body"].fillna("").astype(str)).str.strip()
+        elif "Body" in df.columns:
+            df["Description"] = df["Body"]
+        elif "Title" in df.columns:
+            df["Description"] = df["Title"]
+        else:
+            raise SystemExit("No Description/Title/Body column to score.")
+
+    if "Program" not in df.columns:
+        df["Program"] = "Unknown"
+    df["Program"] = df["Program"].map(normalize_program)
+
+    if "Date" in df.columns:
+        df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+    else:
+        df["Date"] = pd.NaT
+
+    df["Description"] = df["Description"].astype(str).str.strip()
+    df = df.dropna(subset=["Description"])
+    df = df[df["Description"].str.len() >= MIN_TEXT_LEN]
+    df = df.drop_duplicates(subset=["Program", "Description", "Date"], keep="first")
+
+    OUT.parent.mkdir(parents=True, exist_ok=True)
+    df.to_parquet(OUT, index=False)
+    print(f"Wrote {OUT} with {len(df):,} rows")
+
+if __name__ == "__main__":
+    main()
