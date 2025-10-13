@@ -1,0 +1,20 @@
+[project]
+name = "tdlr-sentiment"
+version = "0.1.0"
+description = "Compliant sentiment analysis pipeline for TDLR public datasets"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "pandas>=2.2",
+  "numpy>=1.26",
+  "pyarrow>=16.0",
+  "fastparquet>=2024.5.0",
+  "requests>=2.32",
+  "matplotlib>=3.9",
+  "plotly>=5.24",
+  "python-dotenv>=1.0",
+  "azure-ai-textanalytics>=5.3.0"
+]
+
+[tool.setuptools]
+packages = ["src"]
