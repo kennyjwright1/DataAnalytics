@@ -2,8 +2,8 @@ name: Nightly Data Pipeline
 
 on:
   schedule:
-    - cron: "15 3 * * *"   # daily at 03:15 UTC
-  workflow_dispatch:       # manual run button
+    - cron: "15 3 * * *"
+  workflow_dispatch:
   push:
     paths:
       - "src/**"
@@ -17,10 +17,8 @@ jobs:
       contents: write
 
     env:
-      # Required for Azure sentiment step (optional if you skip that step)
       AZURE_TEXT_ENDPOINT: ${{ secrets.AZURE_TEXT_ENDPOINT }}
       AZURE_TEXT_KEY: ${{ secrets.AZURE_TEXT_KEY }}
-      # Optional sources
       REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
       REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
       REDDIT_USER_AGENT: ${{ secrets.REDDIT_USER_AGENT }}
@@ -35,15 +33,11 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install project (and ensure praw is present)
+      - name: Install project (plus praw)
         run: |
           pip install -e .
-          # safety net if pyproject change hasn't been pushed yet:
-          python - <<'PY'
-          import importlib, sys
-          sys.exit(0) if importlib.util.find_spec('praw') else sys.exit(1)
-          PY
-          if [ $? -ne 0 ]; then pip install praw; fi
+          # install praw unconditionally to avoid conditional failure
+          pip install praw
 
       - name: Show which secrets are set (no values)
         run: |
@@ -55,44 +49,45 @@ jobs:
               print(f"{k}: {'SET' if os.environ.get(k) else 'NOT SET'}")
           PY
 
-      # ============== INGEST ==============
+      # ===== Optional: seed one tiny sample on the very first run so pipeline can complete =====
+      - name: Seed sample data if nothing ingested yet
+        run: |
+          if ! ls data/raw/*.parquet >/dev/null 2>&1; then
+            mkdir -p data/raw_inbox
+            cp -f data/sample/tdlr_sample.csv data/raw_inbox/ || true
+            python src/ingest/fetch_public_data.py || true
+          fi
 
+      # ================== INGEST ==================
       - name: Ingest GDELT (news)
         run: python src/ingest/gdelt_ingest.py
-        continue-on-error: true   # don't fail the whole job on transient network errors
+        continue-on-error: true
 
       - name: Ingest Reddit (public discussion)
         if: ${{ env.REDDIT_CLIENT_ID != '' && env.REDDIT_CLIENT_SECRET != '' && env.REDDIT_USER_AGENT != '' }}
         run: python src/ingest/reddit_ingest.py
+        continue-on-error: true
 
       - name: Ingest YouTube (comments)
         if: ${{ env.YOUTUBE_API_KEY != '' }}
         run: python src/ingest/youtube_ingest.py
+        continue-on-error: true
 
-      # ============== TRANSFORM / NLP / AGGREGATES / SITE ==============
-
+      # ================== TRANSFORM / NLP / AGGREGATES / SITE ==================
       - name: Clean & normalize
         run: python src/transform/clean_normalize.py
 
       - name: Azure sentiment
-        if: ${{ env.AZURE_TEXT_ENDPOINT != '' && env.AZURE_TEXT_KEY != '' }}
+        if: ${{ env.AZURE_TEXT_ENDPOINT != '' && env.AZURE_TEXT_KEY != '' && hashFiles('data/interim/tdlr_clean.parquet') != '' }}
         run: python src/nlp/azure_sentiment.py
 
       - name: Aggregates for BI
-        run: |
-          if [ -f "data/processed/tdlr_scored.parquet" ]; then
-            python src/analytics/aggregates.py
-          else
-            echo "Skipping aggregates: scored parquet not found (Azure step likely skipped)."
-          fi
+        if: ${{ hashFiles('data/processed/tdlr_scored.parquet') != '' }}
+        run: python src/analytics/aggregates.py
 
       - name: Build Pages site
-        run: |
-          if [ -f "data/processed/exports/program_month_sentiment.csv" ]; then
-            python src/viz/build_site.py
-          else
-            echo "Skipping site build: no exports CSV."
-          fi
+        if: ${{ hashFiles('data/processed/exports/program_month_sentiment.csv') != '' }}
+        run: python src/viz/build_site.py
 
       - name: Commit docs and exports
         run: |
