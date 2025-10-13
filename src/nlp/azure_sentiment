@@ -1,71 +1,39 @@
-"""
-Score sentiment using Azure AI Text Analytics (Language service).
-
-Env required:
-  AZURE_TEXT_ENDPOINT
-  AZURE_TEXT_KEY
-
-Input:
-  data/interim/tdlr_clean.parquet
-
-Output:
-  data/processed/tdlr_scored.parquet
-"""
-import os
-import pathlib
-import pandas as pd
+import os, pathlib, pandas as pd
 from azure.ai.textanalytics import TextAnalyticsClient
 from azure.core.credentials import AzureKeyCredential
 
 INP = pathlib.Path("data/interim/tdlr_clean.parquet")
 OUT = pathlib.Path("data/processed/tdlr_scored.parquet")
 
-def get_client():
-    endpoint = os.environ.get("AZURE_TEXT_ENDPOINT")
+def client():
+    ep = os.environ.get("AZURE_TEXT_ENDPOINT")
     key = os.environ.get("AZURE_TEXT_KEY")
-    if not endpoint or not key:
-        raise SystemExit("Missing AZURE_TEXT_ENDPOINT or AZURE_TEXT_KEY environment variables.")
-    return TextAnalyticsClient(endpoint=endpoint, credential=AzureKeyCredential(key))
+    if not ep or not key:
+        raise SystemExit("Missing AZURE_TEXT_ENDPOINT or AZURE_TEXT_KEY.")
+    return TextAnalyticsClient(endpoint=ep, credential=AzureKeyCredential(key))
 
-def analyze_texts(client, texts):
+def main():
+    if not INP.exists():
+        raise SystemExit("Run clean_normalize.py first.")
+    df = pd.read_parquet(INP)
+    texts = df["Description"].astype(str).tolist()
+
+    cl = client()
     results = []
-    batch_size = 10
-    for i in range(0, len(texts), batch_size):
-        chunk = texts[i:i+batch_size]
-        resp = client.analyze_sentiment(documents=chunk)
+    for i in range(0, len(texts), 10):
+        resp = cl.analyze_sentiment(documents=texts[i:i+10])
         for r in resp:
             if r.is_error:
                 results.append(("unknown", 0.0, 0.0, 0.0))
             else:
-                results.append((
-                    r.sentiment,
-                    r.confidence_scores.positive,
-                    r.confidence_scores.neutral,
-                    r.confidence_scores.negative
-                ))
-    return results
-
-def main():
-    if not INP.exists():
-        raise SystemExit("Missing data/interim/tdlr_clean.parquet. Run clean_normalize.py first.")
-    df = pd.read_parquet(INP)
-    if "Description" not in df.columns:
-        raise SystemExit("Input missing 'Description' column.")
-
-    texts = df["Description"].astype(str).tolist()
-    cl = get_client()
-    scored = analyze_texts(cl, texts)
-
-    if len(scored) != len(df):
-        n = min(len(scored), len(df))
-        df = df.iloc[:n].copy()
-        scored = scored[:n]
-
-    df[["sentiment","pos","neu","neg"]] = pd.DataFrame(scored, index=df.index[:len(scored)])
-
+                results.append((r.sentiment, r.confidence_scores.positive,
+                                r.confidence_scores.neutral, r.confidence_scores.negative))
+    n = min(len(results), len(df))
+    df = df.iloc[:n].copy()
+    df[["sentiment","pos","neu","neg"]] = pd.DataFrame(results[:n], index=df.index)
     OUT.parent.mkdir(parents=True, exist_ok=True)
     df.to_parquet(OUT, index=False)
-    print(f"Wrote {OUT} with {len(df):,} rows")
+    print(f"Wrote {OUT} with {len(df)} rows")
 
 if __name__ == "__main__":
     main()
