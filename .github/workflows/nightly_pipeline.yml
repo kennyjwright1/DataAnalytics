@@ -101,12 +101,20 @@ jobs:
         run: python src/nlp/local_sentiment.py
 
       - name: Aggregates for BI
-        if: ${{ hashFiles('src/analytics/aggregates.py') != '' && hashFiles('data/processed/tdlr_scored.parquet') != '' }}
-        run: python src/analytics/aggregates.py
+        run: |
+          if [ -f "data/processed/tdlr_scored.parquet" ]; then
+            python src/analytics/aggregates.py
+          else
+            echo "Skipping aggregates: scored parquet not found."
+          fi
 
       - name: Build Pages site
-        if: ${{ hashFiles('src/viz/build_site.py') != '' && hashFiles('data/processed/exports/program_month_sentiment.csv') != '' }}
-        run: python src/viz/build_site.py
+        run: |
+          if [ -f "data/processed/exports/program_month_sentiment.csv" ]; then
+            python src/viz/build_site.py
+          else
+            echo "Skipping site build: exports CSV not found."
+          fi
 
       - name: Commit docs and exports
         run: |
