@@ -27,13 +27,12 @@ def _style_line(fig, ylab):
             ]
         ),
     )
-    fig.update_yaxes(title=ylab, rangemode="tozero")
+    fig.update_yaxes(title=ylab)
 
 def main():
     if not DATA.exists():
         raise SystemExit("Missing exports CSV. Run aggregates.py first.")
     df = pd.read_csv(DATA, parse_dates=["month"])
-
     if df.empty:
         raise SystemExit("No rows to plot.")
 
@@ -43,10 +42,12 @@ def main():
     last_month = df["month"].max()
     last_month_items = int(df.loc[df["month"] == last_month, "count"].sum())
 
-    # --- Smoothing: 3-month rolling averages per Program ---
+    # --- Rolling averages (3 months) & Net sentiment ---
     df = df.sort_values(["Program", "month"]).copy()
     for col in ["pos", "neg"]:
         df[f"{col}_roll3"] = df.groupby("Program")[col].transform(lambda s: s.rolling(3, min_periods=1).mean())
+    df["net"] = df["pos"] - df["neg"]
+    df["net_roll3"] = df.groupby("Program")["net"].transform(lambda s: s.rolling(3, min_periods=1).mean())
 
     # --- Charts ---
     pos = px.line(
@@ -64,6 +65,15 @@ def main():
     )
     _style_line(neg, "Negative (0–1)")
     neg.update_traces(hovertemplate="<b>%{x|%b %Y}</b><br>Negative: %{y:.2f}<extra></extra>")
+
+    net = px.line(
+        df, x="month", y="net_roll3", color="Program",
+        title="Net Sentiment (Positive − Negative), 3-mo avg",
+        labels={"net_roll3": "Net (−1…1)"}
+    )
+    _style_line(net, "Net (−1…1)")
+    net.update_yaxes(zeroline=True, zerolinewidth=1, zerolinecolor="#aaa")
+    net.update_traces(hovertemplate="<b>%{x|%b %Y}</b><br>Net: %{y:.2f}<extra></extra>")
 
     vol = px.bar(
         df, x="month", y="count", color="Program", barmode="group",
@@ -121,11 +131,12 @@ def main():
 { kpi_html }
 <div class="card">{pos.to_html(full_html=False, include_plotlyjs='cdn')}</div>
 <div class="card">{neg.to_html(full_html=False, include_plotlyjs=False)}</div>
+<div class="card">{net.to_html(full_html=False, include_plotlyjs=False)}</div>
 <div class="card">{vol.to_html(full_html=False, include_plotlyjs=False)}</div>
 """
     DOCS.mkdir(parents=True, exist_ok=True)
     (DOCS / "index.html").write_text(html, encoding="utf-8")
-    print("Wrote docs/index.html with styled KPIs + 3 charts")
+    print("Wrote docs/index.html with KPIs + 4 charts (incl. Net Sentiment)")
 
 if __name__ == "__main__":
     main()
