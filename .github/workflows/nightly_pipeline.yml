@@ -36,7 +36,6 @@ jobs:
       - name: Install project (plus praw)
         run: |
           pip install -e .
-          # install praw unconditionally to avoid conditional failure
           pip install praw
 
       - name: Show which secrets are set (no values)
@@ -49,44 +48,60 @@ jobs:
               print(f"{k}: {'SET' if os.environ.get(k) else 'NOT SET'}")
           PY
 
-      # ===== Optional: seed one tiny sample on the very first run so pipeline can complete =====
-      - name: Seed sample data if nothing ingested yet
-        run: |
-          if ! ls data/raw/*.parquet >/dev/null 2>&1; then
-            mkdir -p data/raw_inbox
-            cp -f data/sample/tdlr_sample.csv data/raw_inbox/ || true
-            python src/ingest/fetch_public_data.py || true
-          fi
-
       # ================== INGEST ==================
       - name: Ingest GDELT (news)
+        if: ${{ hashFiles('src/ingest/gdelt_ingest.py') != '' }}
         run: python src/ingest/gdelt_ingest.py
         continue-on-error: true
 
       - name: Ingest Reddit (public discussion)
-        if: ${{ env.REDDIT_CLIENT_ID != '' && env.REDDIT_CLIENT_SECRET != '' && env.REDDIT_USER_AGENT != '' }}
+        if: ${{ hashFiles('src/ingest/reddit_ingest.py') != '' && env.REDDIT_CLIENT_ID != '' && env.REDDIT_CLIENT_SECRET != '' && env.REDDIT_USER_AGENT != '' }}
         run: python src/ingest/reddit_ingest.py
         continue-on-error: true
 
       - name: Ingest YouTube (comments)
-        if: ${{ env.YOUTUBE_API_KEY != '' }}
+        if: ${{ hashFiles('src/ingest/youtube_ingest.py') != '' && env.YOUTUBE_API_KEY != '' }}
         run: python src/ingest/youtube_ingest.py
         continue-on-error: true
 
+      # ===== Seed only if no raw parquet exists after ingestion =====
+      - name: Seed sample data if none ingested yet
+        run: |
+          python - <<'PY'
+          import pathlib, pandas as pd
+          raw = pathlib.Path("data/raw")
+          raw.mkdir(parents=True, exist_ok=True)
+          if not any(raw.glob("*.parquet")):
+            df = pd.DataFrame([
+              {"Program":"Cosmetology","Description":"Inspection was quick and professional.","Date":"2025-02-05"},
+              {"Program":"Electricians","Description":"Confusing online portal messages.","Date":"2025-03-18"},
+            ])
+            df.to_parquet(raw/"seed.parquet", index=False)
+            print("Seeded data/raw/seed.parquet")
+          else:
+            print("Raw parquet already present; no seed needed.")
+          PY
+
+      - name: List raw files (debug)
+        run: |
+          pwd
+          ls -l data/raw || true
+
       # ================== TRANSFORM / NLP / AGGREGATES / SITE ==================
       - name: Clean & normalize
+        if: ${{ hashFiles('src/transform/clean_normalize.py') != '' }}
         run: python src/transform/clean_normalize.py
 
       - name: Azure sentiment
-        if: ${{ env.AZURE_TEXT_ENDPOINT != '' && env.AZURE_TEXT_KEY != '' && hashFiles('data/interim/tdlr_clean.parquet') != '' }}
+        if: ${{ hashFiles('src/nlp/azure_sentiment.py') != '' && env.AZURE_TEXT_ENDPOINT != '' && env.AZURE_TEXT_KEY != '' && hashFiles('data/interim/tdlr_clean.parquet') != '' }}
         run: python src/nlp/azure_sentiment.py
 
       - name: Aggregates for BI
-        if: ${{ hashFiles('data/processed/tdlr_scored.parquet') != '' }}
+        if: ${{ hashFiles('src/analytics/aggregates.py') != '' && hashFiles('data/processed/tdlr_scored.parquet') != '' }}
         run: python src/analytics/aggregates.py
 
       - name: Build Pages site
-        if: ${{ hashFiles('data/processed/exports/program_month_sentiment.csv') != '' }}
+        if: ${{ hashFiles('src/viz/build_site.py') != '' && hashFiles('data/processed/exports/program_month_sentiment.csv') != '' }}
         run: python src/viz/build_site.py
 
       - name: Commit docs and exports
