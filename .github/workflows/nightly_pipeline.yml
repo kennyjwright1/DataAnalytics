@@ -96,6 +96,10 @@ jobs:
         if: ${{ env.AZURE_TEXT_ENDPOINT != '' && env.AZURE_TEXT_KEY != '' }}
         run: python src/nlp/azure_sentiment.py
 
+      - name: Local sentiment fallback (VADER)
+        if: ${{ hashFiles('src/nlp/local_sentiment.py') != '' && (env.AZURE_TEXT_ENDPOINT == '' || env.AZURE_TEXT_KEY == '') }}
+        run: python src/nlp/local_sentiment.py
+
       - name: Aggregates for BI
         if: ${{ hashFiles('src/analytics/aggregates.py') != '' && hashFiles('data/processed/tdlr_scored.parquet') != '' }}
         run: python src/analytics/aggregates.py
