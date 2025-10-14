@@ -1,6 +1,6 @@
 import io, pandas as pd, requests, pathlib
 
-QUERY = '"Texas Department of Licensing and Regulation" OR TDLR'
+QUERY = '"Texas Department of Licensing and Regulation" OR TDLR OR ("Texas" AND licensing AND regulation)'
 OUT = pathlib.Path("data/raw/gdelt_gkg_tdlr.parquet")
 
 def fetch_gkg():
