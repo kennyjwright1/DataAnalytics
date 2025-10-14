@@ -93,7 +93,7 @@ jobs:
         run: python src/transform/clean_normalize.py
 
       - name: Azure sentiment
-        if: ${{ hashFiles('src/nlp/azure_sentiment.py') != '' && env.AZURE_TEXT_ENDPOINT != '' && env.AZURE_TEXT_KEY != '' && hashFiles('data/interim/tdlr_clean.parquet') != '' }}
+        if: ${{ env.AZURE_TEXT_ENDPOINT != '' && env.AZURE_TEXT_KEY != '' }}
         run: python src/nlp/azure_sentiment.py
 
       - name: Aggregates for BI
